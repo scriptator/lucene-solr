@@ -20,7 +20,9 @@ print("Creating jar file")
 subprocess.run(
   "jar -cvf bm25mod.jar "
   "-C solr/solr-core/classes/java/ org/apache/solr/search/similarities/BM25ModSimilarityFactory.class "
-  "-C lucene/core/classes/java/ org/apache/lucene/search/similarities/BM25ModSimilarity.class",
+  "-C lucene/core/classes/java/ org/apache/lucene/search/similarities/BM25ModSimilarity.class "
+  "-C lucene/core/classes/java/ org/apache/lucene/search/similarities/BM25ModSimilarity\$BM25ModDocScorer.class "
+  "-C lucene/core/classes/java/ org/apache/lucene/search/similarities/BM25ModSimilarity\$BM25ModStats.class",
   shell=True, check=True)
 print()
 
