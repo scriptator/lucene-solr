@@ -16,21 +16,29 @@
  */
 package org.apache.lucene.search.similarities;
 
+import java.lang.invoke.MethodHandles;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Modification of the classical BM25 similarity measure:
- *
+ * <p>
  * TODO
  * Your task is to modify the score calculation in this BM25Similarity class
  * and create a new similarity class called BM25ModSimilarity. You then use it
  * in your index by modifying the configurations.
- *
+ * <p>
  * for 15 points: Lv, Yuanhua, and ChengXiang Zhai. ”When documents are very long, bm25 fails!.” Proceedings of SIGIR 2011. link
  * for 30 points: Lipani, Aldo, et al. ”Verboseness Fission for BM25 Document Length Normal- ization.” Proceedings of ICTIR 2015. link
  */
 public class BM25ModSimilarity extends BM25Similarity {
 
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
   public BM25ModSimilarity(float k1, float b) {
     super(k1, b);
+    log.info("Hello World!");
   }
 
   public BM25ModSimilarity() {

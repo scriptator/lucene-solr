@@ -16,10 +16,14 @@
  */
 package org.apache.solr.search.similarities;
 
+import java.lang.invoke.MethodHandles;
+
 import org.apache.lucene.search.similarities.BM25ModSimilarity;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.schema.SimilarityFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Factory for {@link BM25ModSimilarity}
@@ -40,6 +44,8 @@ import org.apache.solr.schema.SimilarityFactory;
  * @lucene.experimental
  */
 public class BM25ModSimilarityFactory extends SimilarityFactory {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
   private boolean discountOverlaps;
   private float k1;
   private float b;
@@ -54,6 +60,7 @@ public class BM25ModSimilarityFactory extends SimilarityFactory {
 
   @Override
   public Similarity getSimilarity() {
+    log.info("Creating new BM25ModSimilarity");
     BM25ModSimilarity sim = new BM25ModSimilarity(k1, b);
     sim.setDiscountOverlaps(discountOverlaps);
     return sim;
