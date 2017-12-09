@@ -23,10 +23,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.lucene.index.FieldInvertState;
-import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.search.CollectionStatistics;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.TermStatistics;
 import org.apache.lucene.util.BytesRef;
@@ -47,7 +47,6 @@ import org.slf4j.LoggerFactory;
  */
 public class BM25ModSimilarity extends Similarity {
   private final float k1;
-  private final float b;
 
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
@@ -56,19 +55,14 @@ public class BM25ModSimilarity extends Similarity {
    * BM25 with the supplied parameter values.
    *
    * @param k1 Controls non-linear term frequency normalization (saturation).
-   * @param b  Controls to what degree document length normalizes tf values.
    * @throws IllegalArgumentException if {@code k1} is infinite or negative, or if {@code b} is
    *                                  not within the range {@code [0..1]}
    */
-  public BM25ModSimilarity(float k1, float b) {
+  public BM25ModSimilarity(float k1) {
     if (Float.isFinite(k1) == false || k1 < 0) {
       throw new IllegalArgumentException("illegal k1 value: " + k1 + ", must be a non-negative finite value");
     }
-    if (Float.isNaN(b) || b < 0 || b > 1) {
-      throw new IllegalArgumentException("illegal b value: " + b + ", must be between 0 and 1");
-    }
     this.k1 = k1;
-    this.b = b;
   }
 
   /**
@@ -79,7 +73,7 @@ public class BM25ModSimilarity extends Similarity {
    * </ul>
    */
   public BM25ModSimilarity() {
-    this(1.2f, 0.75f);
+    this(1.2f);
   }
 
   /**
@@ -119,15 +113,12 @@ public class BM25ModSimilarity extends Similarity {
   }
 
   // calculate mean average term frequency
-  protected float mAvgTf(CollectionStatistics collectionStats) {
-    collectionStats.sumTotalTermFreq()
-    final long sumTotalTermFreq = collectionStats.sumTotalTermFreq();
-    if (sumTotalTermFreq <= 0) {
-      return 1f;       // field does not exist, or stat is unsupported
-    } else {
-      final long docCount = collectionStats.docCount() == -1 ? collectionStats.maxDoc() : collectionStats.docCount();
-      return (float) (sumTotalTermFreq / (double) docCount);
+  protected double computeMAvgTf(long docCount, NumericDocValues norms) throws IOException {
+    double sum = 0;
+    while (norms.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
+      sum += unpackAvgTf(norms.longValue());
     }
+    return sum / docCount;
   }
 
   /**
@@ -155,33 +146,34 @@ public class BM25ModSimilarity extends Similarity {
   }
 
   /**
-   * Cache of decoded bytes.
+   * Pack norm and avgTf into one long
    */
-  private static final float[] OLD_LENGTH_TABLE = new float[256];
-  private static final float[] LENGTH_TABLE = new float[256];
-
-  static {
-    for (int i = 1; i < 256; i++) {
-      float f = SmallFloat.byte315ToFloat((byte) i);
-      OLD_LENGTH_TABLE[i] = 1.0f / (f * f);
-    }
-    OLD_LENGTH_TABLE[0] = 1.0f / OLD_LENGTH_TABLE[255]; // otherwise inf
-
-    for (int i = 0; i < 256; i++) {
-      LENGTH_TABLE[i] = SmallFloat.byte4ToInt((byte) i);
-    }
+  protected long packNormAndAvgTf(int norm, float avgTf) {
+    return ((long) norm << 32) | Float.floatToIntBits(avgTf);
   }
 
+  /**
+   * Unpack norm from packed value packed with packNormAndAvgTf
+   */
+  protected int unpackNorm(long packed) {
+    return (int) (packed >> 32);
+  }
+
+  /**
+   * Unpack norm from packed value packed with packNormAndAvgTf
+   */
+  protected float unpackAvgTf(long packed) {
+    return Float.intBitsToFloat((int) packed);
+  }
 
   @Override
   public final long computeNorm(FieldInvertState state) {
-    final int numTerms = discountOverlaps ? state.getLength() - state.getNumOverlap() : state.getLength();
-    int indexCreatedVersionMajor = state.getIndexCreatedVersionMajor();
-    if (indexCreatedVersionMajor >= 7) {
-      return SmallFloat.intToByte4(numTerms);
-    } else {
-      return SmallFloat.floatToByte315((float) (1 / Math.sqrt(numTerms)));
-    }
+    final int norm = discountOverlaps ? state.getLength() - state.getNumOverlap() : state.getLength();
+    final float avgTf = 1f * norm / state.getUniqueTermCount();
+    // pack docLen and avgTf into one long
+    long packed =  packNormAndAvgTf(norm, avgTf);
+    log.info("Name: " + state.getName() + ", Norm: " + norm + ", avgTf: " + avgTf + ", packed: " + packed);
+    return packed;
   }
 
   /**
@@ -243,68 +235,66 @@ public class BM25ModSimilarity extends Similarity {
   public final SimWeight computeWeight(float boost, CollectionStatistics collectionStats, TermStatistics... termStats) {
     Explanation idf = termStats.length == 1 ? idfExplain(collectionStats, termStats[0]) : idfExplain(collectionStats, termStats);
     float avgdl = avgFieldLength(collectionStats);
+    final long docCount = collectionStats.docCount() == -1 ? collectionStats.maxDoc() : collectionStats.docCount();
 
-    float[] oldCache = new float[256];
-    float[] cache = new float[256];
-    for (int i = 0; i < cache.length; i++) {
-      oldCache[i] = k1 * ((1 - b) + b * OLD_LENGTH_TABLE[i] / avgdl);
-      cache[i] = k1 * ((1 - b) + b * LENGTH_TABLE[i] / avgdl);
-    }
-    return new BM25ModStats(collectionStats.field(), boost, idf, avgdl, oldCache, cache);
+    return new BM25ModStats(collectionStats.field(), boost, idf, docCount, avgdl);
   }
 
   @Override
   public final SimScorer simScorer(SimWeight stats, LeafReaderContext context) throws IOException {
     BM25ModStats bm25stats = (BM25ModStats) stats;
-    return new BM25ModDocScorer(bm25stats, context.reader().getMetaData().getCreatedVersionMajor(), context.reader().getNormValues(bm25stats.field));
+    return new BM25ModDocScorer(bm25stats,
+        context.reader().getNumericDocValues(bm25stats.field),
+        context.reader().getNormValues(bm25stats.field));
   }
 
   private class BM25ModDocScorer extends SimScorer {
     private final BM25ModStats stats;
     private final float weightValue; // boost * idf * (k1 + 1)
+    private final double mAvgTf;     // mean average term frequencies
     private final NumericDocValues norms;
-    /**
-     * precomputed cache for all length values
-     */
-    private final float[] lengthCache;
-    /**
-     * precomputed norm[256] with k1 * ((1 - b) + b * dl / avgdl)
-     */
-    private final float[] cache;
+    private final NumericDocValues avgTfs;
 
-    BM25ModDocScorer(BM25ModStats stats, int indexCreatedVersionMajor, NumericDocValues norms) throws IOException {
+    BM25ModDocScorer(BM25ModStats stats, NumericDocValues avgTfs,
+                     NumericDocValues norms) throws IOException {
+      log.info("Scorer initialized");
       this.stats = stats;
       this.weightValue = stats.weight * (k1 + 1);
+      this.avgTfs = avgTfs;
       this.norms = norms;
-      if (indexCreatedVersionMajor >= 7) {
-        lengthCache = LENGTH_TABLE;
-        cache = stats.cache;
-      } else {
-        lengthCache = OLD_LENGTH_TABLE;
-        cache = stats.oldCache;
-      }
+
+      mAvgTf = computeMAvgTf(stats.docCount, norms);
     }
 
     @Override
     public float score(int doc, float freq) throws IOException {
 //      log.info("Score called: " + doc + ", " + freq);
       // if there are no norms, we act as if b=0
-      float norm;
+      double norm;
+      double avgTf;
       if (norms == null) {
-        norm = k1;
+        log.warn("No norm available, setting B to 1");
+        norm = 1;
+        avgTf = 1;
       } else {
         if (norms.advanceExact(doc)) {
-          norm = cache[((byte) norms.longValue()) & 0xFF];
+          norm = unpackNorm(norms.longValue());
+          avgTf = unpackAvgTf(norms.longValue());
         } else {
-          norm = cache[0];
+          log.warn("No value for norm available");
+          norm = 1;
+          avgTf = 1;
         }
       }
-      return weightValue * freq / (freq + norm);
+
+      double bva = 1 / (mAvgTf*mAvgTf) * avgTf + (1 - 1 / mAvgTf) * norm / stats.avgdl;
+      log.info("Computed bva value " + bva + " for document " + doc);
+      return (float) (weightValue * freq / (freq + k1 * bva));
     }
 
     @Override
     public Explanation explain(int doc, Explanation freq) throws IOException {
-      return explainScore(doc, freq, stats, norms, lengthCache);
+      return explainScore(doc, freq, stats, norms);
     }
 
     @Override
@@ -343,24 +333,21 @@ public class BM25ModSimilarity extends Similarity {
      */
     private final String field;
     /**
-     * precomputed norm[256] with k1 * ((1 - b) + b * dl / avgdl)
-     * for both OLD_LENGTH_TABLE and LENGTH_TABLE
+     * Numer of documents
      */
-    private final float[] oldCache, cache;
+    private final long docCount;
 
-    BM25ModStats(String field, float boost, Explanation idf, float avgdl, float[] oldCache, float[] cache) {
+    BM25ModStats(String field, float boost, Explanation idf, long docCount, float avgdl) {
       this.field = field;
       this.boost = boost;
       this.idf = idf;
+      this.docCount = docCount;
       this.avgdl = avgdl;
       this.weight = idf.getValue() * boost;
-      this.oldCache = oldCache;
-      this.cache = cache;
     }
-
   }
 
-  private Explanation explainTFNorm(int doc, Explanation freq, BM25ModStats stats, NumericDocValues norms, float[] lengthCache) throws IOException {
+  private Explanation explainTFNorm(int doc, Explanation freq, BM25ModStats stats, NumericDocValues norms) throws IOException {
     List<Explanation> subs = new ArrayList<>();
     subs.add(freq);
     subs.add(Explanation.match(k1, "parameter k1"));
@@ -376,23 +363,22 @@ public class BM25ModSimilarity extends Similarity {
       } else {
         norm = 0;
       }
-      float doclen = lengthCache[norm & 0xff];
-      subs.add(Explanation.match(b, "parameter b"));
       subs.add(Explanation.match(stats.avgdl, "avgFieldLength"));
-      subs.add(Explanation.match(doclen, "fieldLength"));
+      // TODO fix this calculation again
       return Explanation.match(
-          (freq.getValue() * (k1 + 1)) / (freq.getValue() + k1 * (1 - b + b * doclen / stats.avgdl)),
+          1,
+//          (freq.getValue() * (k1 + 1)) / (freq.getValue() + k1 * (1 - b + b * doclen / stats.avgdl)),
           "tfNorm, computed as (freq * (k1 + 1)) / (freq + k1 * (1 - b + b * fieldLength / avgFieldLength)) from:", subs);
     }
   }
 
-  private Explanation explainScore(int doc, Explanation freq, BM25ModStats stats, NumericDocValues norms, float[] lengthCache) throws IOException {
+  private Explanation explainScore(int doc, Explanation freq, BM25ModStats stats, NumericDocValues norms) throws IOException {
     Explanation boostExpl = Explanation.match(stats.boost, "boost");
     List<Explanation> subs = new ArrayList<>();
     if (boostExpl.getValue() != 1.0f)
       subs.add(boostExpl);
     subs.add(stats.idf);
-    Explanation tfNormExpl = explainTFNorm(doc, freq, stats, norms, lengthCache);
+    Explanation tfNormExpl = explainTFNorm(doc, freq, stats, norms);
     subs.add(tfNormExpl);
     return Explanation.match(
         boostExpl.getValue() * stats.idf.getValue() * tfNormExpl.getValue(),
@@ -401,24 +387,16 @@ public class BM25ModSimilarity extends Similarity {
 
   @Override
   public String toString() {
-    return "BM25(k1=" + k1 + ",b=" + b + ")";
+    return "BM25(k1=" + k1 + ")";
   }
 
   /**
    * Returns the <code>k1</code> parameter
    *
-   * @see #BM25ModSimilarity(float, float)
+   * @see #BM25ModSimilarity(float)
    */
   public final float getK1() {
     return k1;
   }
 
-  /**
-   * Returns the <code>b</code> parameter
-   *
-   * @see #BM25ModSimilarity(float, float)
-   */
-  public final float getB() {
-    return b;
-  }
 }

@@ -48,20 +48,18 @@ public class BM25ModSimilarityFactory extends SimilarityFactory {
 
   private boolean discountOverlaps;
   private float k1;
-  private float b;
 
   @Override
   public void init(SolrParams params) {
     super.init(params);
     discountOverlaps = params.getBool("discountOverlaps", true);
     k1 = params.getFloat("k1", 1.2f);
-    b = params.getFloat("b", 0.75f);
   }
 
   @Override
   public Similarity getSimilarity() {
     log.info("Creating new BM25ModSimilarity");
-    BM25ModSimilarity sim = new BM25ModSimilarity(k1, b);
+    BM25ModSimilarity sim = new BM25ModSimilarity(k1);
     sim.setDiscountOverlaps(discountOverlaps);
     return sim;
   }
