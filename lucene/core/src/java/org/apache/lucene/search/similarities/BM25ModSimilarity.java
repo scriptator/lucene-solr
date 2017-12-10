@@ -263,7 +263,8 @@ public class BM25ModSimilarity extends Similarity {
       this.avgTfs = avgTfs;
       this.norms = norms;
 
-      mAvgTf = computeMAvgTf(stats.docCount, norms);
+      // TODO do not hardcode this value!
+      mAvgTf = 1.25;
     }
 
     @Override
