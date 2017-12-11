@@ -50,6 +50,9 @@ public class BM25ModSimilarity extends Similarity {
 
   private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+  private static float mAvgTf = -1;
+  private static int avgCount = 0;
+
 
   /**
    * BM25 with the supplied parameter values.
@@ -59,6 +62,7 @@ public class BM25ModSimilarity extends Similarity {
    *                                  not within the range {@code [0..1]}
    */
   public BM25ModSimilarity(float k1) {
+
     if (Float.isFinite(k1) == false || k1 < 0) {
       throw new IllegalArgumentException("illegal k1 value: " + k1 + ", must be a non-negative finite value");
     }
@@ -173,6 +177,19 @@ public class BM25ModSimilarity extends Similarity {
     // pack docLen and avgTf into one long
     long packed =  packNormAndAvgTf(norm, avgTf);
     log.info("Name: " + state.getName() + ", Norm: " + norm + ", avgTf: " + avgTf + ", packed: " + packed);
+
+    //Calculate the mAvgTf (mean average term frequency)
+    if(avgCount == 0){
+      mAvgTf=avgTf;
+    } else {
+      mAvgTf = (mAvgTf*avgCount + avgTf)/(float)(avgCount+1);
+    }
+
+    avgCount++;
+
+    log.info("mAvgTf is currently " + mAvgTf);
+
+
     return packed;
   }
 
@@ -264,7 +281,7 @@ public class BM25ModSimilarity extends Similarity {
       this.norms = norms;
 
       // TODO do not hardcode this value!
-      mAvgTf = 1.25;
+      mAvgTf = BM25ModSimilarity.mAvgTf;
     }
 
     @Override
