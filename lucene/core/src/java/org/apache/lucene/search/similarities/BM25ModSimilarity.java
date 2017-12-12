@@ -18,7 +18,6 @@ package org.apache.lucene.search.similarities;
 
 
 import java.io.IOException;
-import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,13 +25,9 @@ import org.apache.lucene.index.FieldInvertState;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.search.CollectionStatistics;
-import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.TermStatistics;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.SmallFloat;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Modification of the classical BM25 similarity measure:
@@ -47,8 +42,6 @@ import org.slf4j.LoggerFactory;
  */
 public class BM25ModSimilarity extends Similarity {
   private final float k1;
-
-  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private static float mAvgTf = -1;
   private static int avgCount = 0;
@@ -166,21 +159,16 @@ public class BM25ModSimilarity extends Similarity {
     final int norm = discountOverlaps ? state.getLength() - state.getNumOverlap() : state.getLength();
     final float avgTf = 1f * norm / state.getUniqueTermCount();
     // pack docLen and avgTf into one long
-    long packed =  packNormAndAvgTf(norm, avgTf);
-    log.info("Name: " + state.getName() + ", Norm: " + norm + ", avgTf: " + avgTf + ", packed: " + packed);
+    long packed = packNormAndAvgTf(norm, avgTf);
 
     //Calculate the mAvgTf (mean average term frequency)
-    if(avgCount == 0){
-      mAvgTf=avgTf;
+    if (avgCount == 0) {
+      mAvgTf = avgTf;
     } else {
-      mAvgTf = (mAvgTf*avgCount + avgTf)/(float)(avgCount+1);
+      mAvgTf = (mAvgTf * avgCount + avgTf) / (float) (avgCount + 1);
     }
 
     avgCount++;
-
-    log.info("mAvgTf is currently " + mAvgTf);
-
-
     return packed;
   }
 
@@ -262,7 +250,6 @@ public class BM25ModSimilarity extends Similarity {
     private final NumericDocValues norms;
 
     BM25ModDocScorer(BM25ModStats stats, NumericDocValues norms) throws IOException {
-      log.info("Scorer initialized");
       this.stats = stats;
       this.weightValue = stats.weight * (k1 + 1);
       this.norms = norms;
@@ -278,12 +265,10 @@ public class BM25ModSimilarity extends Similarity {
 
     @Override
     public float score(int doc, float freq) throws IOException {
-//      log.info("Score called: " + doc + ", " + freq);
       // if there are no norms, we act as if b=0
       double norm;
       double avgTf;
       if (norms == null) {
-        log.warn("No norm available, setting B to 1");
         norm = 1;
         avgTf = 1;
       } else {
@@ -291,14 +276,12 @@ public class BM25ModSimilarity extends Similarity {
           norm = unpackNorm(norms.longValue());
           avgTf = unpackAvgTf(norms.longValue());
         } else {
-          log.warn("No value for norm available");
           norm = 1;
           avgTf = 1;
         }
       }
 
-      double bva = 1 / (mAvgTf*mAvgTf) * avgTf + (1 - 1 / mAvgTf) * norm / stats.avgdl;
-      log.info("Computed bva value " + bva + " for document " + doc);
+      double bva = 1 / (mAvgTf * mAvgTf) * avgTf + (1 - 1 / mAvgTf) * norm / stats.avgdl;
       return (float) (weightValue * freq / (freq + k1 * bva));
     }
 
