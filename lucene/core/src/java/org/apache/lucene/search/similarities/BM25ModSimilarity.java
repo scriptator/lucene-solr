@@ -116,15 +116,6 @@ public class BM25ModSimilarity extends Similarity {
     }
   }
 
-  // calculate mean average term frequency
-  protected double computeMAvgTf(long docCount, NumericDocValues norms) throws IOException {
-    double sum = 0;
-    while (norms.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
-      sum += unpackAvgTf(norms.longValue());
-    }
-    return sum / docCount;
-  }
-
   /**
    * True if overlap tokens (tokens with a position of increment of zero) are
    * discounted from the document's length.
@@ -261,7 +252,6 @@ public class BM25ModSimilarity extends Similarity {
   public final SimScorer simScorer(SimWeight stats, LeafReaderContext context) throws IOException {
     BM25ModStats bm25stats = (BM25ModStats) stats;
     return new BM25ModDocScorer(bm25stats,
-        context.reader().getNumericDocValues(bm25stats.field),
         context.reader().getNormValues(bm25stats.field));
   }
 
@@ -270,18 +260,20 @@ public class BM25ModSimilarity extends Similarity {
     private final float weightValue; // boost * idf * (k1 + 1)
     private final double mAvgTf;     // mean average term frequencies
     private final NumericDocValues norms;
-    private final NumericDocValues avgTfs;
 
-    BM25ModDocScorer(BM25ModStats stats, NumericDocValues avgTfs,
-                     NumericDocValues norms) throws IOException {
+    BM25ModDocScorer(BM25ModStats stats, NumericDocValues norms) throws IOException {
       log.info("Scorer initialized");
       this.stats = stats;
       this.weightValue = stats.weight * (k1 + 1);
-      this.avgTfs = avgTfs;
       this.norms = norms;
 
-      // TODO do not hardcode this value!
-      mAvgTf = BM25ModSimilarity.mAvgTf;
+      // retrieve mavg from the class variable again
+      // if it is unset, just use 1
+      if (BM25ModSimilarity.mAvgTf != 0) {
+        mAvgTf = BM25ModSimilarity.mAvgTf;
+      } else {
+        mAvgTf = 1;
+      }
     }
 
     @Override
